@@ -342,25 +342,20 @@ nouveau_horizon_runtime_shutdown(void (*step)(const char *what))
    nouveau_horizon_runtime.initialized = false;
    nouveau_horizon_runtime.refcnt = 0;
    /* step, when given, says what is being closed, so a caller whose log stops
-    * can tell what did not come back. */
-   /* A channel's command buffers are the GPU's until the channel is closed.
-    * Not the usual teardown: that waits for the work to finish, and the work
-    * belonged to a program that has already been ended. */
-   if (step != NULL)
-      step("channels");
-   list_for_each_entry(struct nouveau_horizon_device, device,
-                       &nouveau_horizon_runtime.devices, runtime_link) {
-      list_for_each_entry_safe(struct nouveau_horizon_channel, channel,
-                               &device->channels, device_link) {
-         if (channel->channel_ready) {
-            nvGpuChannelClose(&channel->gpu_channel);
-            channel->channel_ready = false;
-         }
-      }
-      list_inithead(&device->channels);
-   }
-   /* A buffer's pages stay with the GPU while its address space still binds
-    * them, so the address spaces go next. */
+    * can tell what did not come back.
+    *
+    * The channels are left alone. Closing one gave three pages back out of
+    * eighty-five, every time it was measured, and a channel whose work is still
+    * in flight is closed without waiting for it -- the usual teardown waits, and
+    * the work belongs to a program that has already been ended. The display
+    * driver walks into what that leaves behind: a console that came back to this
+    * launcher four times froze on the fourth, hard enough to need the power
+    * button, inside bringing the graphics stack back up. Whatever the channels
+    * hold goes when the session does, as it does for a process that dies.
+    *
+    * A buffer's pages stay with the GPU while its address space still binds
+    * them, so the address spaces go first.
+    */
    if (step != NULL)
       step("address spaces");
    list_for_each_entry_safe(struct nouveau_horizon_device, device,
