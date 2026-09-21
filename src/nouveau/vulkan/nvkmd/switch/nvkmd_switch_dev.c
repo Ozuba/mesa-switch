@@ -665,6 +665,15 @@ static void
 nvkmd_switch_dev_destroy(struct nvkmd_dev *_dev)
 {
    struct nvkmd_switch_dev *dev = nvkmd_switch_dev(_dev);
+
+   /* Anything still listed here is a client leak, so release it rather than
+    * leaving the NvMap and its backing store behind.
+    */
+   list_for_each_entry_safe(struct nvkmd_mem, mem, &_dev->mems, link) {
+      list_del(&mem->link);
+      nvkmd_switch_mem_free(mem);
+   }
+
    simple_mtx_destroy(&dev->base.mems_mutex);
    nouveau_horizon_device_put(dev->horizon);
    nouveau_horizon_runtime_put(dev->runtime);
@@ -735,6 +744,17 @@ nvkmd_switch_dev_alloc_va(struct nvkmd_dev *_dev,
    return VK_SUCCESS;
 }
 
+static uint32_t
+nvkmd_switch_memory_flags(enum nvkmd_mem_flags flags)
+{
+   uint32_t horizon_flags = NOUVEAU_HORIZON_MEMORY_CPU_VISIBLE;
+   if (!(flags & NVKMD_MEM_COHERENT))
+      horizon_flags |= NOUVEAU_HORIZON_MEMORY_CPU_CACHED;
+   if (!(flags & NVKMD_MEM_GPU_UNCACHED))
+      horizon_flags |= NOUVEAU_HORIZON_MEMORY_GPU_CACHED;
+   return horizon_flags;
+}
+
 static VkResult
 nvkmd_switch_dev_alloc_mem_impl(struct nvkmd_switch_dev *dev,
                                  struct vk_object_base *log_obj,
@@ -759,12 +779,8 @@ nvkmd_switch_dev_alloc_mem_impl(struct nvkmd_switch_dev *dev,
    if (mem == NULL)
       return vk_error(log_obj, VK_ERROR_OUT_OF_HOST_MEMORY);
 
-   uint32_t horizon_flags = NOUVEAU_HORIZON_MEMORY_CPU_VISIBLE |
+   uint32_t horizon_flags = nvkmd_switch_memory_flags(flags) |
                             NOUVEAU_HORIZON_MEMORY_ZERO;
-   if (!(flags & NVKMD_MEM_COHERENT))
-      horizon_flags |= NOUVEAU_HORIZON_MEMORY_CPU_CACHED;
-   if (!(flags & NVKMD_MEM_GPU_UNCACHED))
-      horizon_flags |= NOUVEAU_HORIZON_MEMORY_GPU_CACHED;
 
    const struct nouveau_horizon_memory_create_info create_info = {
       .size_B = size_B,
@@ -923,13 +939,10 @@ nvkmd_switch_dev_import_host_ptr(struct nvkmd_dev *_dev,
    if (mem == NULL)
       return vk_error(log_obj, VK_ERROR_OUT_OF_HOST_MEMORY);
 
-   /* Imported host pages are ordinary cacheable RAM; clients drive explicit
-    * flush/invalidate.
+   /* Use the same cache policy as native allocations: coherent imports must
+    * turn off CPU caching, while cached imports use explicit flush/invalidate.
     */
-   uint32_t horizon_flags = NOUVEAU_HORIZON_MEMORY_CPU_VISIBLE |
-                            NOUVEAU_HORIZON_MEMORY_CPU_CACHED;
-   if (!(flags & NVKMD_MEM_GPU_UNCACHED))
-      horizon_flags |= NOUVEAU_HORIZON_MEMORY_GPU_CACHED;
+   uint32_t horizon_flags = nvkmd_switch_memory_flags(flags);
 
    const struct nouveau_horizon_memory_create_info create_info = {
       .size_B = size_B,

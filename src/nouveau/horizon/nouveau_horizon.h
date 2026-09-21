@@ -170,7 +170,8 @@ struct nouveau_horizon_memory_create_info {
 
    /* When set, wrap this caller-owned range instead of allocating.  Pointer
     * and size_B must be 4 KiB aligned and outlive the identity; the range is
-    * never freed, recycled or cleared.
+    * never freed, recycled or cleared. Without CPU_CACHED, the range is made
+    * uncached for the identity's lifetime and restored to cached on release.
     */
    void *import_host_ptr;
 };
@@ -417,6 +418,13 @@ nouveau_horizon_runtime_ref(struct nouveau_horizon_runtime *runtime);
 
 void
 nouveau_horizon_runtime_put(struct nouveau_horizon_runtime *runtime);
+
+/* Closes the driver sessions whatever still references them, so nvservices
+ * gives back every buffer and mapping this process holds. For a process that is
+ * closing: nothing may touch the GPU afterwards. step, which may be NULL, is
+ * told which session is about to be closed. */
+void
+nouveau_horizon_runtime_shutdown(void (*step)(const char *what));
 
 /* Fill all GM20B information which is independent of a logical address
  * space.  This call does not acquire libnx services.
